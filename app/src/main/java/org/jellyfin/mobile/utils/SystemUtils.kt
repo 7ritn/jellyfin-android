@@ -1,6 +1,7 @@
 package org.jellyfin.mobile.utils
 
-import android.Manifest
+import android.Manifest.permission.POST_NOTIFICATIONS
+import android.Manifest.permission.WRITE_EXTERNAL_STORAGE
 import android.app.Activity
 import android.app.ActivityManager
 import android.app.AlertDialog
@@ -16,10 +17,12 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.provider.Settings.System.ACCELEROMETER_ROTATION
 import androidx.coordinatorlayout.widget.CoordinatorLayout
+import androidx.core.content.PermissionChecker.PERMISSION_GRANTED
 import androidx.core.content.getSystemService
 import com.google.android.exoplayer2.offline.DownloadService
 import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeout
 import org.jellyfin.mobile.BuildConfig
 import org.jellyfin.mobile.MainActivity
 import org.jellyfin.mobile.R
@@ -36,6 +39,8 @@ import org.koin.android.ext.android.get
 import timber.log.Timber
 import java.io.File
 import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
+import kotlin.time.Duration.Companion.minutes
 
 fun WebViewFragment.requestNoBatteryOptimizations(rootView: CoordinatorLayout) {
     if (AndroidVersion.isAtLeastM) {
@@ -65,6 +70,22 @@ fun WebViewFragment.requestNoBatteryOptimizations(rootView: CoordinatorLayout) {
 suspend fun MainActivity.requestDownload(uri: Uri, filename: String) {
     val appPreferences: AppPreferences = get()
 
+    // Storage permission for downloads isn't necessary from Android 10 onwards
+    if (!AndroidVersion.isAtLeastQ) {
+        val granted = withTimeout(2.minutes.inWholeMilliseconds) {
+            suspendCoroutine { continuation ->
+                requestPermission(WRITE_EXTERNAL_STORAGE) { requestPermissionsResult ->
+                    continuation.resume(requestPermissionsResult[WRITE_EXTERNAL_STORAGE] == PERMISSION_GRANTED)
+                }
+            }
+        }
+
+        if (!granted) {
+            toast(R.string.download_no_storage_permission)
+            return
+        }
+    }
+
     val downloadMethod = appPreferences.downloadMethod ?: suspendCancellableCoroutine { continuation ->
         AlertDialog.Builder(this)
             .setTitle(R.string.network_title)
@@ -93,7 +114,7 @@ suspend fun MainActivity.requestDownload(uri: Uri, filename: String) {
 
     val permissionResult: Boolean = suspendCancellableCoroutine { continuation ->
         requestPermission("android.permission.POST_NOTIFICATIONS") { permissionsMap ->
-            if (permissionsMap[Manifest.permission.POST_NOTIFICATIONS] == PackageManager.PERMISSION_GRANTED) {
+            if (permissionsMap[POST_NOTIFICATIONS] == PackageManager.PERMISSION_GRANTED) {
                 continuation.resume(true)
             } else {
                 continuation.cancel(null)
